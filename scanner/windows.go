@@ -1106,47 +1106,45 @@ func (o *windows) scanKBs() (*models.WindowsKB, error) {
 		}
 	}
 
-	if isLocalExec(o.getServerInfo().Port, o.getServerInfo().Host) {
-		var searcher string
-		switch c := o.getServerInfo().Windows; c.ServerSelection {
-		case 3: // https://learn.microsoft.com/en-us/windows/win32/wua_sdk/using-wua-to-scan-for-updates-offline
-			searcher = fmt.Sprintf("$UpdateSession = (New-Object -ComObject Microsoft.Update.Session); $UpdateServiceManager = (New-Object -ComObject Microsoft.Update.ServiceManager); $UpdateService = $UpdateServiceManager.AddScanPackageService(\"Offline Sync Service\", \"%s\"); $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $UpdateSearcher.ServerSelection = %d; $UpdateSearcher.ServiceID = $UpdateService.ServiceID;", c.CabPath, c.ServerSelection)
-		default:
-			searcher = fmt.Sprintf("$UpdateSession = (New-Object -ComObject Microsoft.Update.Session); $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $UpdateSearcher.ServerSelection = %d;", c.ServerSelection)
-		}
+	var searcher string
+	switch c := o.getServerInfo().Windows; c.ServerSelection {
+	case 3: // https://learn.microsoft.com/en-us/windows/win32/wua_sdk/using-wua-to-scan-for-updates-offline
+		searcher = fmt.Sprintf("$UpdateSession = (New-Object -ComObject Microsoft.Update.Session); $UpdateServiceManager = (New-Object -ComObject Microsoft.Update.ServiceManager); $UpdateService = $UpdateServiceManager.AddScanPackageService('\"Offline Sync Service\"', '\"%s\"'); $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $UpdateSearcher.ServerSelection = %d; $UpdateSearcher.ServiceID = $UpdateService.ServiceID;", c.CabPath, c.ServerSelection)
+	default:
+		searcher = fmt.Sprintf("$UpdateSession = (New-Object -ComObject Microsoft.Update.Session); $UpdateSearcher = $UpdateSession.CreateUpdateSearcher(); $UpdateSearcher.ServerSelection = %d;", c.ServerSelection)
+	}
 
-		if r := o.exec(fmt.Sprintf(`%s $UpdateSearcher.search("IsInstalled = 1 and RebootRequired = 0 and Type='Software'").Updates | ForEach-Object -MemberName KBArticleIDs`, searcher), noSudo); r.isSuccess() {
-			kbs, err := o.parseWindowsUpdaterSearch(r.Stdout)
-			if err != nil {
-				return nil, xerrors.Errorf("Failed to parse Windows Update Search. err: %w", err)
-			}
-			for _, kb := range kbs {
-				applied[kb] = struct{}{}
-			}
+	if r := o.exec(fmt.Sprintf(`%s $UpdateSearcher.search(`+strconv.Quote(`"IsInstalled = 1 and RebootRequired = 0 and Type='Software'"`)+`).Updates | ForEach-Object -MemberName KBArticleIDs`, searcher), noSudo); r.isSuccess() {
+		kbs, err := o.parseWindowsUpdaterSearch(r.Stdout)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to parse Windows Update Search. err: %w", err)
 		}
-		if r := o.exec(fmt.Sprintf(`%s $UpdateSearcher.search("IsInstalled = 0 and Type='Software'").Updates | ForEach-Object -MemberName KBArticleIDs`, searcher), noSudo); r.isSuccess() {
-			kbs, err := o.parseWindowsUpdaterSearch(r.Stdout)
-			if err != nil {
-				return nil, xerrors.Errorf("Failed to parse Windows Update Search. err: %w", err)
-			}
-			for _, kb := range kbs {
-				unapplied[kb] = struct{}{}
-			}
+		for _, kb := range kbs {
+			applied[kb] = struct{}{}
 		}
-		if r := o.exec(fmt.Sprintf(`%s $UpdateSearcher.search("IsInstalled = 1 and RebootRequired = 1 and Type='Software'").Updates | ForEach-Object -MemberName KBArticleIDs`, searcher), noSudo); r.isSuccess() {
-			kbs, err := o.parseWindowsUpdaterSearch(r.Stdout)
-			if err != nil {
-				return nil, xerrors.Errorf("Failed to parse Windows Update Search. err: %w", err)
-			}
-			for _, kb := range kbs {
-				unapplied[kb] = struct{}{}
-			}
+	}
+	if r := o.exec(fmt.Sprintf(`%s $UpdateSearcher.search(`+strconv.Quote(`"IsInstalled = 0 and Type='Software'"`)+`).Updates | ForEach-Object -MemberName KBArticleIDs`, searcher), noSudo); r.isSuccess() {
+		kbs, err := o.parseWindowsUpdaterSearch(r.Stdout)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to parse Windows Update Search. err: %w", err)
 		}
+		for _, kb := range kbs {
+			unapplied[kb] = struct{}{}
+		}
+	}
+	if r := o.exec(fmt.Sprintf(`%s $UpdateSearcher.search(`+strconv.Quote(`"IsInstalled = 1 and RebootRequired = 1 and Type='Software'"`)+`).Updates | ForEach-Object -MemberName KBArticleIDs`, searcher), noSudo); r.isSuccess() {
+		kbs, err := o.parseWindowsUpdaterSearch(r.Stdout)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to parse Windows Update Search. err: %w", err)
+		}
+		for _, kb := range kbs {
+			unapplied[kb] = struct{}{}
+		}
+	}
 
-		if o.getServerInfo().Windows.ServerSelection == 3 {
-			if r := o.exec(`$UpdateServiceManager = (New-Object -ComObject Microsoft.Update.ServiceManager); $UpdateServiceManager.Services | Where-Object {$_.Name -eq "Offline Sync Service"} | ForEach-Object { $UpdateServiceManager.RemoveService($_.ServiceID) };`, noSudo); !r.isSuccess() {
-				return nil, xerrors.Errorf("Failed to remove Windows Update Offline Sync Service: %v", r)
-			}
+	if o.getServerInfo().Windows.ServerSelection == 3 {
+		if r := o.exec(`$UpdateServiceManager = (New-Object -ComObject Microsoft.Update.ServiceManager); $UpdateServiceManager.Services | Where-Object {$_.Name -eq '"Offline Sync Service"'} | ForEach-Object { $UpdateServiceManager.RemoveService($_.ServiceID) };`, noSudo); !r.isSuccess() {
+			return nil, xerrors.Errorf("Failed to remove Windows Update Offline Sync Service: %v", r)
 		}
 	}
 
